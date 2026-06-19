@@ -12,6 +12,7 @@
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         .slot-gray { background-color: #334155; border-color: #475569; }
         .slot-green { background-color: #22c55e; box-shadow: 0 0 15px rgba(34,197,94,0.5); }
+        .slot-red { background-color: #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.5); }
     </style>
 </head>
 <body class="min-h-screen p-6 flex flex-col gap-6">
@@ -22,15 +23,12 @@
             <p id="statusText" class="text-slate-400 text-sm font-semibold mt-1">COM Port: Disconnected</p>
         </div>
         <div class="flex gap-4 items-center">
-            <div class="flex items-center gap-2">
-                <label class="text-sm text-slate-400">Ending:</label>
-                <select id="lineEnding" class="bg-slate-700 p-2 rounded text-sm outline-none cursor-pointer">
-                    <option value="LF">LF (\n)</option>
-                    <option value="CR">CR (\r)</option>
-                    <option value="CRLF">CR+LF (\r\n)</option>
-                    <option value="NONE">None</option>
-                </select>
-            </div>
+            <select id="lineEnding" class="bg-slate-700 p-2 rounded text-sm outline-none cursor-pointer">
+                <option value="LF">LF (\n)</option>
+                <option value="CR">CR (\r)</option>
+                <option value="CRLF">CR+LF (\r\n)</option>
+                <option value="NONE">None</option>
+            </select>
             <button id="connectBtn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold transition-all">Connect COM Port</button>
             <button id="exportBtn" class="px-6 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg font-bold transition-all">Export CSV</button>
         </div>
@@ -63,7 +61,6 @@
             },
 
             parseMessage: (msg) => {
-                // regex looks for t[Dev]A86970[Node][Status]
                 const match = msg.match(/t(\d{2})A86970(\d{2})(\d{2})/i);
                 if (match) {
                     const dev = parseInt(match[1]);
@@ -81,7 +78,7 @@
         };
 
         let port, writer, logs = [];
-        let slots = Array.from({ length: 64 }, (_, i) => ({ id: i + 1, status: 'gray', count: 0 }));
+        let slots = Array.from({ length: 64 }, (_, i) => ({ id: i + 1, status: 'gray', count: 0, timer: null }));
 
         function renderSlots() {
             document.getElementById('slotsGrid').innerHTML = slots.map(s => `
@@ -97,6 +94,16 @@
             s.count++;
             document.getElementById(`count-${id}`).innerText = s.count;
 
+            // Clear any existing timeout for this slot
+            if (s.timer) clearTimeout(s.timer);
+            
+            // Set Red status only if no response arrives within 2 seconds
+            s.timer = setTimeout(() => {
+                const check = slots.find(x => x.id === id);
+                check.status = 'red';
+                document.getElementById(`slot-${id}`).className = `slot-red border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
+            }, 2000);
+
             if(writer) {
                 const cmd = PROTOCOL.CMD_REQUEST_STATUS(id);
                 await writer.write(cmd);
@@ -105,8 +112,10 @@
         }
 
         function addLog(dir, msg, slot, count, statusLabel = null) {
+            const now = new Date();
+            const timestamp = `${now.toLocaleTimeString()}.${now.getMilliseconds().toString().padStart(3, '0')}`;
             const displayMsg = statusLabel ? `${msg} (${statusLabel})` : msg;
-            logs.unshift({ time: new Date().toLocaleTimeString(), dir, msg: displayMsg, slot, count });
+            logs.unshift({ time: timestamp, dir, msg: displayMsg, slot, count });
             const container = document.getElementById('logsContainer');
             container.insertAdjacentHTML('afterbegin', `<div class="border-b border-slate-700 pb-1"><b>[${dir}]</b> ${displayMsg} ${slot !== 'N/A' ? '(Slot ' + slot + ')' : ''}</div>`);
             document.getElementById('logCount').innerText = `${logs.length} entries`;
@@ -124,24 +133,23 @@
                 document.getElementById('connectBtn').innerText = 'Disconnect';
                 
                 const reader = port.readable.getReader();
-                try {
-                    while (true) {
-                        const { value } = await reader.read();
-                        const msg = new TextDecoder().decode(value);
-                        const res = PROTOCOL.parseMessage(msg);
-                        
-                        if(res) {
+                while (true) {
+                    const { value } = await reader.read();
+                    const msg = new TextDecoder().decode(value);
+                    const res = PROTOCOL.parseMessage(msg);
+                    
+                    if(res) {
+                        const s = slots.find(x => x.id === res.slot);
+                        if(s) {
+                            clearTimeout(s.timer); // Feedback received, stop the Red timer
+                            s.status = res.status;
                             addLog('RX', msg.trim(), res.slot, 0, res.label);
-                            const s = slots.find(x => x.id === res.slot);
-                            if(s) {
-                                s.status = res.status;
-                                document.getElementById(`slot-${s.id}`).className = `slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
-                            }
-                        } else {
-                            addLog('RX', msg.trim(), 'N/A', 0);
+                            document.getElementById(`slot-${s.id}`).className = `slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
                         }
+                    } else {
+                        addLog('RX', msg.trim(), 'N/A', 0);
                     }
-                } catch(e) { console.error(e); }
+                }
             }
         });
 
