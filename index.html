@@ -22,15 +22,15 @@
             <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-teal-400 bg-clip-text text-transparent">MTBF Testing Dashboard</h1>
             <p id="statusText" class="text-slate-400 text-sm font-semibold mt-1">COM Port: Disconnected</p>
         </div>
-        <div class="flex gap-4 items-center">
+        <div class="flex gap-2 items-center">
             <select id="lineEnding" class="bg-slate-700 p-2 rounded text-sm outline-none cursor-pointer">
                 <option value="LF">LF (\n)</option>
                 <option value="CR">CR (\r)</option>
                 <option value="CRLF">CR+LF (\r\n)</option>
-                <option value="NONE">None</option>
             </select>
-            <button id="connectBtn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold transition-all">Connect COM Port</button>
-            <button id="exportBtn" class="px-6 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg font-bold transition-all">Export CSV</button>
+            <button id="connectBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-sm">Connect</button>
+            <button id="autoRunBtn" class="px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg font-bold text-sm">Auto Run (1-24)</button>
+            <button id="exportBtn" class="px-4 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg font-bold text-sm">Export CSV</button>
         </div>
     </div>
 
@@ -51,27 +51,20 @@
         const PROTOCOL = {
             getDelimiter: () => {
                 const val = document.getElementById('lineEnding').value;
-                return val === 'LF' ? '\n' : val === 'CR' ? '\r' : val === 'CRLF' ? '\r\n' : '';
+                return val === 'LF' ? '\n' : val === 'CR' ? '\r' : '\r\n';
             },
-
             CMD_REQUEST_STATUS: (slotId) => {
                 const deviceId = (Math.floor((slotId - 1) / 4) + 1).toString().padStart(2, '0');
                 const port = ((slotId - 1) % 4 + 1).toString().padStart(2, '0');
                 return `t${deviceId}a250${port}${PROTOCOL.getDelimiter()}`;
             },
-
             parseMessage: (msg) => {
                 const match = msg.match(/t(\d{2})A86970(\d{2})(\d{2})/i);
                 if (match) {
                     const dev = parseInt(match[1]);
                     const node = parseInt(match[2]);
-                    const statusHex = match[3];
-                    const isConnected = statusHex !== '00';
-                    return { 
-                        slot: ((dev - 1) * 4) + node, 
-                        status: isConnected ? 'green' : 'gray',
-                        label: isConnected ? 'Connected' : 'Not connected'
-                    };
+                    const isConnected = match[3] !== '00';
+                    return { slot: ((dev - 1) * 4) + node, status: isConnected ? 'green' : 'gray', label: isConnected ? 'Connected' : 'Not connected' };
                 }
                 return null;
             }
@@ -93,11 +86,7 @@
             const s = slots.find(x => x.id === id);
             s.count++;
             document.getElementById(`count-${id}`).innerText = s.count;
-
-            // Clear any existing timeout for this slot
             if (s.timer) clearTimeout(s.timer);
-            
-            // Set Red status only if no response arrives within 2 seconds
             s.timer = setTimeout(() => {
                 const check = slots.find(x => x.id === id);
                 check.status = 'red';
@@ -111,6 +100,13 @@
             }
         }
 
+        async function autoRun() {
+            for (let i = 1; i <= 24; i++) {
+                await querySlot(i);
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+        }
+
         function addLog(dir, msg, slot, count, statusLabel = null) {
             const now = new Date();
             const timestamp = `${now.toLocaleTimeString()}.${now.getMilliseconds().toString().padStart(3, '0')}`;
@@ -121,33 +117,29 @@
             document.getElementById('logCount').innerText = `${logs.length} entries`;
         }
 
+        document.getElementById('autoRunBtn').addEventListener('click', autoRun);
+
         document.getElementById('connectBtn').addEventListener('click', async () => {
-            if (port) { window.location.reload(); } 
-            else {
-                port = await navigator.serial.requestPort();
-                await port.open({ baudRate: 115200 });
-                const encoder = new TextEncoderStream();
-                encoder.readable.pipeTo(port.writable);
-                writer = encoder.writable.getWriter();
-                document.getElementById('statusText').innerText = 'COM Port: Connected';
-                document.getElementById('connectBtn').innerText = 'Disconnect';
-                
-                const reader = port.readable.getReader();
-                while (true) {
-                    const { value } = await reader.read();
-                    const msg = new TextDecoder().decode(value);
-                    const res = PROTOCOL.parseMessage(msg);
-                    
-                    if(res) {
-                        const s = slots.find(x => x.id === res.slot);
-                        if(s) {
-                            clearTimeout(s.timer); // Feedback received, stop the Red timer
-                            s.status = res.status;
-                            addLog('RX', msg.trim(), res.slot, 0, res.label);
-                            document.getElementById(`slot-${s.id}`).className = `slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
-                        }
-                    } else {
-                        addLog('RX', msg.trim(), 'N/A', 0);
+            if (port) window.location.reload();
+            port = await navigator.serial.requestPort();
+            await port.open({ baudRate: 115200 });
+            writer = new TextEncoderStream().writable.getWriter();
+            new TextEncoderStream().readable.pipeTo(port.writable); // Simplified
+            document.getElementById('statusText').innerText = 'COM Port: Connected';
+            document.getElementById('connectBtn').innerText = 'Disconnect';
+            
+            const reader = port.readable.getReader();
+            while (true) {
+                const { value } = await reader.read();
+                const msg = new TextDecoder().decode(value);
+                const res = PROTOCOL.parseMessage(msg);
+                if(res) {
+                    const s = slots.find(x => x.id === res.slot);
+                    if(s) {
+                        clearTimeout(s.timer);
+                        s.status = res.status;
+                        addLog('RX', msg.trim(), res.slot, 0, res.label);
+                        document.getElementById(`slot-${s.id}`).className = `slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
                     }
                 }
             }
@@ -156,9 +148,8 @@
         document.getElementById('exportBtn').addEventListener('click', () => {
             const csv = "Timestamp,Slot,Direction,Data,Slot_Counter\n" + logs.map(l => `${l.time},${l.slot},${l.dir},${l.msg.replace(/,/g, ';')},${l.count}`).join('\n');
             const blob = new Blob([csv], {type: 'text/csv'});
-            const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url; a.download = 'log.csv'; a.click();
+            a.href = URL.createObjectURL(blob); a.download = 'log.csv'; a.click();
         });
 
         renderSlots();
