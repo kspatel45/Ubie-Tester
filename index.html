@@ -49,10 +49,7 @@
 
     <script>
         const PROTOCOL = {
-            getDelimiter: () => {
-                const val = document.getElementById('lineEnding').value;
-                return val === 'LF' ? '\n' : val === 'CR' ? '\r' : '\r\n';
-            },
+            getDelimiter: () => document.getElementById('lineEnding').value === 'LF' ? '\n' : document.getElementById('lineEnding').value === 'CR' ? '\r' : '\r\n',
             CMD_REQUEST_STATUS: (slotId) => {
                 const deviceId = (Math.floor((slotId - 1) / 4) + 1).toString().padStart(2, '0');
                 const port = ((slotId - 1) % 4 + 1).toString().padStart(2, '0');
@@ -103,7 +100,7 @@
         async function autoRun() {
             for (let i = 1; i <= 24; i++) {
                 await querySlot(i);
-                await new Promise(resolve => setTimeout(resolve, 300));
+                await new Promise(r => setTimeout(r, 300));
             }
         }
 
@@ -113,36 +110,41 @@
             const displayMsg = statusLabel ? `${msg} (${statusLabel})` : msg;
             logs.unshift({ time: timestamp, dir, msg: displayMsg, slot, count });
             const container = document.getElementById('logsContainer');
-            container.insertAdjacentHTML('afterbegin', `<div class="border-b border-slate-700 pb-1"><b>[${dir}]</b> ${displayMsg} ${slot !== 'N/A' ? '(Slot ' + slot + ')' : ''}</div>`);
+            container.insertAdjacentHTML('afterbegin', `<div class="border-b border-slate-700 pb-1"><b>[${dir}]</b> ${displayMsg} (Slot ${slot})</div>`);
             document.getElementById('logCount').innerText = `${logs.length} entries`;
         }
 
         document.getElementById('autoRunBtn').addEventListener('click', autoRun);
 
         document.getElementById('connectBtn').addEventListener('click', async () => {
-            if (port) window.location.reload();
-            port = await navigator.serial.requestPort();
-            await port.open({ baudRate: 115200 });
-            writer = new TextEncoderStream().writable.getWriter();
-            new TextEncoderStream().readable.pipeTo(port.writable); // Simplified
-            document.getElementById('statusText').innerText = 'COM Port: Connected';
-            document.getElementById('connectBtn').innerText = 'Disconnect';
-            
-            const reader = port.readable.getReader();
-            while (true) {
-                const { value } = await reader.read();
-                const msg = new TextDecoder().decode(value);
-                const res = PROTOCOL.parseMessage(msg);
-                if(res) {
-                    const s = slots.find(x => x.id === res.slot);
-                    if(s) {
-                        clearTimeout(s.timer);
-                        s.status = res.status;
-                        addLog('RX', msg.trim(), res.slot, 0, res.label);
-                        document.getElementById(`slot-${s.id}`).className = `slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+                writer = port.writable.getWriter();
+                document.getElementById('statusText').innerText = 'COM Port: Connected';
+                
+                const decoder = new TextDecoderStream();
+                port.readable.pipeTo(decoder.writable);
+                const reader = decoder.readable.getReader();
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    const res = PROTOCOL.parseMessage(value);
+                    if(res) {
+                        const s = slots.find(x => x.id === res.slot);
+                        if(s) {
+                            clearTimeout(s.timer);
+                            s.status = res.status;
+                            addLog('RX', value.trim(), res.slot, s.count, res.label);
+                            document.getElementById(`slot-${s.id}`).className = `slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
+                        }
+                    } else {
+                        addLog('RX', value.trim(), 'N/A', 0);
                     }
                 }
-            }
+            } catch (err) { alert("Connection Error: " + err); }
         });
 
         document.getElementById('exportBtn').addEventListener('click', () => {
