@@ -12,7 +12,7 @@
             color: #333;
         }
         .container {
-            max-width: 1000px;
+            max-width: 1100px;
             margin: 0 auto;
             background: #fff;
             padding: 20px;
@@ -21,10 +21,24 @@
         }
         .controls {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             margin-bottom: 20px;
             align-items: center;
             flex-wrap: wrap;
+            background: #f0f0f5;
+            padding: 12px;
+            border-radius: 6px;
+        }
+        label {
+            font-size: 13px;
+            font-weight: 600;
+        }
+        select {
+            padding: 8px;
+            font-size: 13px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            background: white;
         }
         button {
             padding: 10px 16px;
@@ -43,7 +57,7 @@
         
         .status {
             font-weight: bold;
-            margin-left: 10px;
+            margin-left: auto;
         }
         .status.connected { color: #34c759; }
         .status.disconnected { color: #ff3b30; }
@@ -54,7 +68,7 @@
             gap: 20px;
         }
         .table-container {
-            max-height: 400px;
+            max-height: 450px;
             overflow-y: auto;
             border: 1px solid #ddd;
             border-radius: 4px;
@@ -76,7 +90,7 @@
             color: #00ff00;
             padding: 15px;
             border-radius: 4px;
-            height: 400px;
+            height: 450px;
             overflow-y: auto;
             font-family: monospace;
             font-size: 13px;
@@ -94,9 +108,27 @@
     
     <div class="controls">
         <button id="btnConnect" class="btn-connect">Connect COM Port</button>
+        
+        <label for="endingSelect">Line Ending:</label>
+        <select id="endingSelect">
+            <option value="CR" selected>CR (\r)</option>
+            <option value="LF">LF (\n)</option>
+            <option value="CRLF">CR+LF (\r\n)</option>
+            <option value="NONE">None (Raw Strings)</option>
+        </select>
+
+        <label for="baudSelect">Baud Rate:</label>
+        <select id="baudSelect">
+            <option value="9600" selected>9600</option>
+            <option value="115200">115200</option>
+            <option value="57600">57600</option>
+            <option value="19200">19200</option>
+        </select>
+
         <button id="btnStart" class="btn-start" disabled>Start Loop</button>
         <button id="btnStop" class="btn-stop" disabled>Stop Loop</button>
         <button id="btnCSV" class="btn-csv">Download CSV</button>
+        
         <span id="statusText" class="status disconnected">Disconnected</span>
     </div>
 
@@ -131,11 +163,9 @@
     let loopInterval;
     let keepReading = true;
     
-    // Sequence Tracking Variables
     let currentT = 1; 
     let currentCounter = 1; 
     
-    // Data Storage for CSV Logging
     const trafficHistory = []; 
     const commandCounters = {}; 
 
@@ -157,9 +187,8 @@
 
     function logTraffic(direction, text) {
         const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-        const cleanText = text.replace(/[\r\n]+/g, ' ').trim(); // Clean linebreaks for display
-        
-        if (!cleanText) return; // Skip logging completely empty frames
+        // Stripping out backline artifacts for cleaner view layout
+        const cleanText = text.replace(/[\r\n]+/g, ' ').trim(); 
 
         trafficHistory.push({ timestamp, direction, data: cleanText });
 
@@ -181,21 +210,23 @@
             status.textContent = "Connected";
             status.className = "status connected";
             document.getElementById('btnConnect').disabled = true;
+            document.getElementById('baudSelect').disabled = true;
             document.getElementById('btnStart').disabled = false;
         } else {
             status.textContent = "Disconnected";
             status.className = "status disconnected";
             document.getElementById('btnConnect').disabled = false;
+            document.getElementById('baudSelect').disabled = false;
             document.getElementById('btnStart').disabled = true;
             document.getElementById('btnStop').disabled = true;
         }
     }
 
     document.getElementById('btnConnect').addEventListener('click', async () => {
+        const selectedBaud = parseInt(document.getElementById('baudSelect').value, 10);
         try {
             port = await navigator.serial.requestPort();
-            // Defaulting to 9600 baud rate. Update if your hardware uses 115200, etc.
-            await port.open({ baudRate: 9600 }); 
+            await port.open({ baudRate: selectedBaud }); 
             setConnectedState(true);
             
             keepReading = true;
@@ -205,7 +236,7 @@
         }
     });
 
-    // DIRECT, ROBUST READ LOOP (No Piped Stream Glitches)
+    // FALLBACK DIAGNOSTIC READING MODE
     async function readLoop() {
         const decoder = new TextDecoder();
         
@@ -217,7 +248,14 @@
                     const { value, done } = await reader.read();
                     if (done) break;
                     if (value) {
-                        const decodedChunk = decoder.decode(value);
+                        // Decode directly to text
+                        let decodedChunk = decoder.decode(value);
+                        
+                        // Fallback check: if string data is blank but data bytes exist, extract hex values
+                        if (!decodedChunk.trim() && value.length > 0) {
+                            decodedChunk = "[Hex Packet: " + Array.from(value).map(b => b.toString(16).padStart(2, '0')).join(' ') + "]";
+                        }
+                        
                         logTraffic('RECEIVED', decodedChunk);
                     }
                 }
@@ -229,7 +267,7 @@
                     reader.releaseLock();
                 }
             }
-            await new Promise(resolve => setTimeout(resolve, 100)); // Safety delay
+            await new Promise(resolve => setTimeout(resolve, 100)); 
         }
     }
 
@@ -253,7 +291,15 @@
         if (!port || !port.writable) return;
 
         const cmd = getNextCommand();
-        const fullPayload = cmd + "\r"; 
+        
+        // Dynamic ending parsing based on UI drop-down menu Selection
+        const endingMode = document.getElementById('endingSelect').value;
+        let suffix = "";
+        if (endingMode === "CR") suffix = "\r";
+        else if (endingMode === "LF") suffix = "\n";
+        else if (endingMode === "CRLF") suffix = "\r\n";
+        
+        const fullPayload = cmd + suffix; 
 
         commandCounters[cmd]++;
         document.getElementById(`count-${cmd}`).textContent = commandCounters[cmd];
@@ -263,7 +309,7 @@
             writer = port.writable.getWriter();
             await writer.write(encoder.encode(fullPayload));
             writer.releaseLock();
-            logTraffic('SENT', cmd);
+            logTraffic('SENT', cmd + (suffix ? ` [${endingMode}]` : ''));
         } catch (error) {
             console.error("Write error:", error);
             if (writer) writer.releaseLock();
@@ -273,8 +319,7 @@
     document.getElementById('btnStart').addEventListener('click', () => {
         document.getElementById('btnStart').disabled = true;
         document.getElementById('btnStop').disabled = false;
-        // Interval changed to 1000ms (1 second)
-        loopInterval = setInterval(sendCommand, 1000);
+        loopInterval = setInterval(sendCommand, 1000); // 1-second cadence
     });
 
     document.getElementById('btnStop').addEventListener('click', () => {
@@ -289,7 +334,7 @@
             return;
         }
 
-        let csvContent = "\uFEFFTimestamp,Direction,Message/Command\n"; // Added BOM token for seamless Excel parsing
+        let csvContent = "\uFEFFTimestamp,Direction,Message/Command\n"; 
         
         trafficHistory.forEach(row => {
             const escapedData = row.data.replace(/"/g, '""');
