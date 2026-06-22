@@ -3,158 +3,310 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTBF Test Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Web Serial Command Sequencer</title>
     <style>
-        body { background-color: #0f172a; color: #f8fafc; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
-        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-        .slot-gray { background-color: #334155; border-color: #475569; }
-        .slot-green { background-color: #22c55e; box-shadow: 0 0 15px rgba(34,197,94,0.5); }
-        .slot-red { background-color: #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.5); }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f7;
+            color: #333;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-connect { background-color: #0071e3; color: white; }
+        .btn-start { background-color: #34c759; color: white; }
+        .btn-stop { background-color: #ff3b30; color: white; }
+        .btn-csv { background-color: #5856d6; color: white; }
+        button:disabled { background-color: #aeaeae; cursor: not-allowed; }
+        
+        .status {
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.connected { color: #34c759; }
+        .status.disconnected { color: #ff3b30; }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+        }
+        .table-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th { background-color: #f2f2f2; position: sticky; top: 0; }
+
+        .log-container {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 4px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+        }
+        .log-sent { color: #00e5ff; }
+        .log-rcv { color: #ffeb3b; }
     </style>
 </head>
-<body class="min-h-screen p-6 flex flex-col gap-6">
+<body>
 
-    <div class="bg-slate-800 rounded-xl p-4 flex justify-between items-center shadow-lg border border-slate-700">
+<div class="container">
+    <h2>Web Serial Command Sequencer</h2>
+    
+    <div class="controls">
+        <button id="btnConnect" class="btn-connect">Connect COM Port</button>
+        <button id="btnStart" class="btn-start" disabled>Start Loop</button>
+        <button id="btnStop" class="btn-stop" disabled>Stop Loop</button>
+        <button id="btnCSV" class="btn-csv">Download CSV</button>
+        <span id="statusText" class="status disconnected">Disconnected</span>
+    </div>
+
+    <div class="dashboard">
         <div>
-            <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-teal-400 bg-clip-text text-transparent">MTBF Testing Dashboard</h1>
-            <p id="statusText" class="text-slate-400 text-sm font-semibold mt-1">COM Port: Disconnected</p>
-        </div>
-        <div class="flex gap-2 items-center">
-            <select id="lineEnding" class="bg-slate-700 p-2 rounded text-sm outline-none cursor-pointer">
-                <option value="LF">LF (\n)</option>
-                <option value="CR">CR (\r)</option>
-                <option value="CRLF">CR+LF (\r\n)</option>
-            </select>
-            <button id="connectBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-sm">Connect</button>
-            <button id="autoRunBtn" class="px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg font-bold text-sm">Auto Run (1-24)</button>
-            <button id="exportBtn" class="px-4 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg font-bold text-sm">Export CSV</button>
-        </div>
-    </div>
-
-    <div class="flex gap-6 h-[calc(100vh-140px)]">
-        <div class="flex-1 bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700 overflow-y-auto custom-scrollbar">
-            <div id="slotsGrid" class="grid grid-cols-8 gap-4"></div>
-        </div>
-        <div class="w-96 bg-slate-800 rounded-xl flex flex-col shadow-lg border border-slate-700 overflow-hidden">
-            <div class="bg-slate-900 p-3 border-b border-slate-700 flex justify-between items-center">
-                <h2 class="font-bold text-slate-300">Serial Logs</h2>
-                <span id="logCount" class="text-xs text-slate-500">0 entries</span>
+            <h3>Command Counters</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Command</th>
+                            <th>Times Sent</th>
+                        </tr>
+                    </thead>
+                    <tbody id="counterTableBody">
+                        </tbody>
+                </table>
             </div>
-            <div id="logsContainer" class="flex-1 p-4 overflow-y-auto custom-scrollbar flex flex-col gap-2 font-mono text-xs"></div>
+        </div>
+        
+        <div>
+            <h3>Live Traffic Console</h3>
+            <div id="liveLog" class="log-container"></div>
         </div>
     </div>
+</div>
 
-    <script>
-        const PROTOCOL = {
-            getDelimiter: () => document.getElementById('lineEnding').value === 'LF' ? '\n' : document.getElementById('lineEnding').value === 'CR' ? '\r' : '\r\n',
-            CMD_REQUEST_STATUS: (slotId) => {
-                const deviceId = (Math.floor((slotId - 1) / 4) + 1).toString().padStart(2, '0');
-                const port = ((slotId - 1) % 4 + 1).toString().padStart(2, '0');
-                return `t${deviceId}a250${port}${PROTOCOL.getDelimiter()}`;
-            },
-            parseMessage: (msg) => {
-                const match = msg.match(/t(\d{2})A86970(\d{2})(\d{2})/i);
-                if (match) {
-                    const dev = parseInt(match[1]);
-                    const node = parseInt(match[2]);
-                    const isConnected = match[3] !== '00';
-                    return { slot: ((dev - 1) * 4) + node, status: isConnected ? 'green' : 'gray', label: isConnected ? 'Connected' : 'Not connected' };
-                }
-                return null;
-            }
-        };
+<script>
+    let port;
+    let writer;
+    let reader;
+    let loopInterval;
+    let keepReading = true;
+    
+    // Sequence Tracking Variables
+    let currentT = 1; // Goes from 1 to 8
+    let currentCounter = 1; // Goes from 1 to 4
+    
+    // Data Storage for CSV Logging
+    const trafficHistory = []; // Array of objects: { timestamp, direction, data }
+    const commandCounters = {}; // Key: Command string, Value: Count
 
-        let port, writer, logs = [];
-        let slots = Array.from({ length: 64 }, (_, i) => ({ id: i + 1, status: 'gray', count: 0, timer: null }));
-
-        function renderSlots() {
-            document.getElementById('slotsGrid').innerHTML = slots.map(s => `
-                <div id="slot-${s.id}" onclick="querySlot(${s.id})" class="slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white hover:opacity-80 transition-all">
-                    <span class="font-bold text-lg">${s.id}</span>
-                    <span class="text-xs opacity-75">Tests: <span id="count-${s.id}">${s.count}</span></span>
-                </div>
-            `).join('');
-        }
-
-        async function querySlot(id) {
-            const s = slots.find(x => x.id === id);
-            s.count++;
-            document.getElementById(`count-${id}`).innerText = s.count;
-            if (s.timer) clearTimeout(s.timer);
-            s.timer = setTimeout(() => {
-                const check = slots.find(x => x.id === id);
-                check.status = 'red';
-                document.getElementById(`slot-${id}`).className = `slot-red border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
-            }, 2000);
-
-            if(writer) {
-                const cmd = PROTOCOL.CMD_REQUEST_STATUS(id);
-                await writer.write(cmd);
-                addLog('TX', cmd.trim(), id, s.count);
-            }
-        }
-
-        async function autoRun() {
-            for (let i = 1; i <= 24; i++) {
-                await querySlot(i);
-                await new Promise(r => setTimeout(r, 300));
-            }
-        }
-
-        function addLog(dir, msg, slot, count, statusLabel = null) {
-            const now = new Date();
-            const timestamp = `${now.toLocaleTimeString()}.${now.getMilliseconds().toString().padStart(3, '0')}`;
-            const displayMsg = statusLabel ? `${msg} (${statusLabel})` : msg;
-            logs.unshift({ time: timestamp, dir, msg: displayMsg, slot, count });
-            const container = document.getElementById('logsContainer');
-            container.insertAdjacentHTML('afterbegin', `<div class="border-b border-slate-700 pb-1"><b>[${dir}]</b> ${displayMsg} (Slot ${slot})</div>`);
-            document.getElementById('logCount').innerText = `${logs.length} entries`;
-        }
-
-        document.getElementById('autoRunBtn').addEventListener('click', autoRun);
-
-        document.getElementById('connectBtn').addEventListener('click', async () => {
-            try {
-                port = await navigator.serial.requestPort();
-                await port.open({ baudRate: 115200 });
-                writer = port.writable.getWriter();
-                document.getElementById('statusText').innerText = 'COM Port: Connected';
+    // Initialize the command counters dictionary for tracking
+    function initCounters() {
+        const tbody = document.getElementById('counterTableBody');
+        tbody.innerHTML = '';
+        for (let t = 1; t <= 8; t++) {
+            for (let c = 1; c <= 4; c++) {
+                const cmd = `t${String(t).padStart(2, '0')}a25${String(c).padStart(3, '0')}`;
+                commandCounters[cmd] = 0;
                 
-                const decoder = new TextDecoderStream();
-                port.readable.pipeTo(decoder.writable);
-                const reader = decoder.readable.getReader();
+                const row = document.createElement('tr');
+                row.id = `row-${cmd}`;
+                row.innerHTML = `<td>${cmd}</td><td id="count-${cmd}">0</td>`;
+                tbody.appendChild(row);
+            }
+        }
+    }
+
+    // Append to live monitor and log array
+    function logTraffic(direction, text) {
+        const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+        trafficHistory.push({ timestamp, direction, data: text.trim() });
+
+        const liveLog = document.getElementById('liveLog');
+        const span = document.createElement('span');
+        span.className = direction === 'SENT' ? 'log-sent' : 'log-rcv';
+        span.textContent = `[${timestamp}] ${direction}: ${text}\n`;
+        liveLog.appendChild(span);
+        liveLog.scrollTop = liveLog.scrollHeight; // Auto-scroll
+    }
+
+    // UI State Management
+    function setConnectedState(connected) {
+        const status = document.getElementById('statusText');
+        if (connected) {
+            status.textContent = "Connected";
+            status.className = "status connected";
+            document.getElementById('btnConnect').disabled = true;
+            document.getElementById('btnStart').disabled = false;
+        } else {
+            status.textContent = "Disconnected";
+            status.className = "status disconnected";
+            document.getElementById('btnConnect').disabled = false;
+            document.getElementById('btnStart').disabled = true;
+            document.getElementById('btnStop').disabled = true;
+        }
+    }
+
+    // Connect to COM Port
+    document.getElementById('btnConnect').addEventListener('click', async () => {
+        try {
+            port = await navigator.serial.requestPort();
+            // Defaulting to 9600 baud rate. Adjust if your device uses 115200, etc.
+            await port.open({ baudRate: 9600 }); 
+            setConnectedState(true);
+            readLoop(); // Start continuous asynchronous reading
+        } catch (error) {
+            alert("Failed to open serial port: " + error);
+        }
+    });
+
+    // Continuous Read Loop
+    async function readLoop() {
+        while (port.readable && keepReading) {
+            reader = port.readable.getReader();
+            try {
+                let decoder = new TextDecoderStream();
+                const inputDone = port.readable.pipeTo(decoder.writable);
+                const inputStream = decoder.readable;
+                const reader2 = inputStream.getReader();
 
                 while (true) {
-                    const { value, done } = await reader.read();
+                    const { value, done } = await reader2.read();
                     if (done) break;
-                    
-                    const res = PROTOCOL.parseMessage(value);
-                    if(res) {
-                        const s = slots.find(x => x.id === res.slot);
-                        if(s) {
-                            clearTimeout(s.timer);
-                            s.status = res.status;
-                            addLog('RX', value.trim(), res.slot, s.count, res.label);
-                            document.getElementById(`slot-${s.id}`).className = `slot-${s.status} border border-slate-600 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer h-24 text-white`;
-                        }
-                    } else {
-                        addLog('RX', value.trim(), 'N/A', 0);
+                    if (value) {
+                        logTraffic('RECEIVED', value);
                     }
                 }
-            } catch (err) { alert("Connection Error: " + err); }
+            } catch (error) {
+                console.error("Read error:", error);
+            } finally {
+                reader.releaseLock();
+            }
+        }
+    }
+
+    // Generate next command in sequence
+    function getNextCommand() {
+        const tStr = String(currentT).padStart(2, '0');
+        const cStr = String(currentCounter).padStart(3, '0');
+        const cmd = `t${tStr}a25${cStr}`;
+
+        // Step up logic for next execution
+        currentCounter++;
+        if (currentCounter > 4) {
+            currentCounter = 1;
+            currentT++;
+            if (currentT > 8) {
+                currentT = 1; // Loop completely back to t01
+            }
+        }
+        return cmd;
+    }
+
+    // Send Single Command Block
+    async function sendCommand() {
+        if (!port || !port.writable) return;
+
+        const cmd = getNextCommand();
+        const fullPayload = cmd + "\r"; // Appending Carriage Return (CR)
+
+        // Increment and Update Counter UI
+        commandCounters[cmd]++;
+        document.getElementById(`count-${cmd}`).textContent = commandCounters[cmd];
+
+        // Write to Serial
+        const encoder = new TextEncoder();
+        writer = port.writable.getWriter();
+        await writer.write(encoder.encode(fullPayload));
+        writer.releaseLock();
+
+        logTraffic('SENT', cmd); // Records text without showing the raw hidden \r in live view
+    }
+
+    // Loop Control Buttons
+    document.getElementById('btnStart').addEventListener('click', () => {
+        document.getElementById('btnStart').disabled = true;
+        document.getElementById('btnStop').disabled = false;
+        
+        // Run every 500ms
+        loopInterval = setInterval(sendCommand, 500);
+    });
+
+    document.getElementById('btnStop').addEventListener('click', () => {
+        document.getElementById('btnStart').disabled = false;
+        document.getElementById('btnStop').disabled = true;
+        clearInterval(loopInterval);
+    });
+
+    // Export Data directly to a downloadable CSV
+    document.getElementById('btnCSV').addEventListener('click', () => {
+        if (trafficHistory.length === 0) {
+            alert("No data recorded yet.");
+            return;
+        }
+
+        let csvContent = "data:text/csv;charset=utf-8,Timestamp,Direction,Message/Command\n";
+        
+        trafficHistory.forEach(row => {
+            // Escape any embedded quotes just in case
+            const escapedData = row.data.replace(/"/g, '""');
+            csvContent += `"${row.timestamp}","${row.direction}","${escapedData}"\n`;
         });
 
-        document.getElementById('exportBtn').addEventListener('click', () => {
-            const csv = "Timestamp,Slot,Direction,Data,Slot_Counter\n" + logs.map(l => `${l.time},${l.slot},${l.dir},${l.msg.replace(/,/g, ';')},${l.count}`).join('\n');
-            const blob = new Blob([csv], {type: 'text/csv'});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob); a.download = 'log.csv'; a.click();
-        });
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        
+        // Naming formatting
+        const dateStr = new Date().toISOString().slice(0,10);
+        link.setAttribute("download", `serial_log_${dateStr}.csv`);
+        document.body.appendChild(link);
+        
+        link.click();
+        document.body.removeChild(link);
+    });
 
-        renderSlots();
-    </script>
+    // Populate initial table structure on load
+    window.onload = initCounters;
+</script>
+
 </body>
 </html>
