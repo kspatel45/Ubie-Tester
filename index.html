@@ -109,7 +109,7 @@
     <div class="controls">
         <button id="btnConnect" class="btn-connect">Connect COM Port</button>
         
-        <label for="endingSelect">Line Ending:</label>
+        <label for="endingSelect">Send Line Ending:</label>
         <select id="endingSelect">
             <option value="CR" selected>CR (\r)</option>
             <option value="LF">LF (\n)</option>
@@ -168,6 +168,9 @@
     
     const trafficHistory = []; 
     const commandCounters = {}; 
+    
+    // Inbound fragmentation string buffer
+    let receivedBuffer = "";
 
     function initCounters() {
         const tbody = document.getElementById('counterTableBody');
@@ -187,8 +190,9 @@
 
     function logTraffic(direction, text) {
         const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-        // Stripping out backline artifacts for cleaner view layout
-        const cleanText = text.replace(/[\r\n]+/g, ' ').trim(); 
+        const cleanText = text.replace(/[\r\n]+/g, '').trim(); 
+
+        if (!cleanText) return; 
 
         trafficHistory.push({ timestamp, direction, data: cleanText });
 
@@ -236,7 +240,7 @@
         }
     });
 
-    // FALLBACK DIAGNOSTIC READING MODE
+    // BUFFERED LINE-BY-LINE READ LOOP
     async function readLoop() {
         const decoder = new TextDecoder();
         
@@ -248,15 +252,26 @@
                     const { value, done } = await reader.read();
                     if (done) break;
                     if (value) {
-                        // Decode directly to text
-                        let decodedChunk = decoder.decode(value);
+                        // Append incoming raw bytes transformed to text into our buffer storage
+                        receivedBuffer += decoder.decode(value);
                         
-                        // Fallback check: if string data is blank but data bytes exist, extract hex values
-                        if (!decodedChunk.trim() && value.length > 0) {
-                            decodedChunk = "[Hex Packet: " + Array.from(value).map(b => b.toString(16).padStart(2, '0')).join(' ') + "]";
+                        // Look for full lines separated by Carriage Returns (\r) or Line Feeds (\n)
+                        while (receivedBuffer.includes('\r') || receivedBuffer.includes('\n')) {
+                            // Find whichever terminator index arrives first
+                            let index = receivedBuffer.indexOf('\r');
+                            if (index === -1) index = receivedBuffer.indexOf('\n');
+                            
+                            // Extract full completed string sequence up to terminator index boundary
+                            const fullLine = receivedBuffer.substring(0, index);
+                            
+                            // Crop processed frame out of memory buffer
+                            receivedBuffer = receivedBuffer.substring(index + 1);
+                            
+                            // Log only completed response lines
+                            if (fullLine.trim().length > 0) {
+                                logTraffic('RECEIVED', fullLine);
+                            }
                         }
-                        
-                        logTraffic('RECEIVED', decodedChunk);
                     }
                 }
             } catch (error) {
@@ -267,7 +282,7 @@
                     reader.releaseLock();
                 }
             }
-            await new Promise(resolve => setTimeout(resolve, 100)); 
+            await new Promise(resolve => setTimeout(resolve, 50)); 
         }
     }
 
@@ -292,7 +307,6 @@
 
         const cmd = getNextCommand();
         
-        // Dynamic ending parsing based on UI drop-down menu Selection
         const endingMode = document.getElementById('endingSelect').value;
         let suffix = "";
         if (endingMode === "CR") suffix = "\r";
@@ -309,7 +323,7 @@
             writer = port.writable.getWriter();
             await writer.write(encoder.encode(fullPayload));
             writer.releaseLock();
-            logTraffic('SENT', cmd + (suffix ? ` [${endingMode}]` : ''));
+            logTraffic('SENT', cmd);
         } catch (error) {
             console.error("Write error:", error);
             if (writer) writer.releaseLock();
@@ -319,7 +333,7 @@
     document.getElementById('btnStart').addEventListener('click', () => {
         document.getElementById('btnStart').disabled = true;
         document.getElementById('btnStop').disabled = false;
-        loopInterval = setInterval(sendCommand, 1000); // 1-second cadence
+        loopInterval = setInterval(sendCommand, 1000); 
     });
 
     document.getElementById('btnStop').addEventListener('click', () => {
