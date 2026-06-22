@@ -84,6 +84,7 @@
         }
         .log-sent { color: #00e5ff; }
         .log-rcv { color: #ffeb3b; }
+        .log-err { color: #ff3b30; }
     </style>
 </head>
 <body>
@@ -117,7 +118,7 @@
         </div>
         
         <div>
-            <h3>Live Traffic Console</h3>
+            <h3>Live Traffic Console (1000ms Interval)</h3>
             <div id="liveLog" class="log-container"></div>
         </div>
     </div>
@@ -131,14 +132,13 @@
     let keepReading = true;
     
     // Sequence Tracking Variables
-    let currentT = 1; // Goes from 1 to 8
-    let currentCounter = 1; // Goes from 1 to 4
+    let currentT = 1; 
+    let currentCounter = 1; 
     
     // Data Storage for CSV Logging
-    const trafficHistory = []; // Array of objects: { timestamp, direction, data }
-    const commandCounters = {}; // Key: Command string, Value: Count
+    const trafficHistory = []; 
+    const commandCounters = {}; 
 
-    // Initialize the command counters dictionary for tracking
     function initCounters() {
         const tbody = document.getElementById('counterTableBody');
         tbody.innerHTML = '';
@@ -155,20 +155,26 @@
         }
     }
 
-    // Append to live monitor and log array
     function logTraffic(direction, text) {
         const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-        trafficHistory.push({ timestamp, direction, data: text.trim() });
+        const cleanText = text.replace(/[\r\n]+/g, ' ').trim(); // Clean linebreaks for display
+        
+        if (!cleanText) return; // Skip logging completely empty frames
+
+        trafficHistory.push({ timestamp, direction, data: cleanText });
 
         const liveLog = document.getElementById('liveLog');
         const span = document.createElement('span');
-        span.className = direction === 'SENT' ? 'log-sent' : 'log-rcv';
-        span.textContent = `[${timestamp}] ${direction}: ${text}\n`;
+        
+        if (direction === 'SENT') span.className = 'log-sent';
+        else if (direction === 'RECEIVED') span.className = 'log-rcv';
+        else span.className = 'log-err';
+
+        span.textContent = `[${timestamp}] ${direction}: ${cleanText}\n`;
         liveLog.appendChild(span);
-        liveLog.scrollTop = liveLog.scrollHeight; // Auto-scroll
+        liveLog.scrollTop = liveLog.scrollHeight; 
     }
 
-    // UI State Management
     function setConnectedState(connected) {
         const status = document.getElementById('statusText');
         if (connected) {
@@ -185,101 +191,90 @@
         }
     }
 
-    // Connect to COM Port
     document.getElementById('btnConnect').addEventListener('click', async () => {
         try {
             port = await navigator.serial.requestPort();
-            // Defaulting to 9600 baud rate. Adjust if your device uses 115200, etc.
+            // Defaulting to 9600 baud rate. Update if your hardware uses 115200, etc.
             await port.open({ baudRate: 9600 }); 
             setConnectedState(true);
-            readLoop(); // Start continuous asynchronous reading
+            
+            keepReading = true;
+            readLoop(); 
         } catch (error) {
             alert("Failed to open serial port: " + error);
         }
     });
 
-    // Continuous Read Loop
-   // Continuous Read Loop (Fixed Stream Locking)
+    // DIRECT, ROBUST READ LOOP (No Piped Stream Glitches)
     async function readLoop() {
-        keepReading = true;
+        const decoder = new TextDecoder();
         
         while (port.readable && keepReading) {
             try {
-                // Pipe the serial input stream directly into a text decoder stream
-                const textDecoder = new TextDecoderStream();
-                const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
-                reader = textDecoder.readable.getReader();
-
+                reader = port.readable.getReader();
+                
                 while (keepReading) {
                     const { value, done } = await reader.read();
-                    if (done) {
-                        break;
-                    }
+                    if (done) break;
                     if (value) {
-                        // Log raw data chunks as they arrive from the COM port
-                        logTraffic('RECEIVED', value);
+                        const decodedChunk = decoder.decode(value);
+                        logTraffic('RECEIVED', decodedChunk);
                     }
                 }
             } catch (error) {
                 console.error("Read error:", error);
-                // Append error to traffic log for better visibility
                 logTraffic('ERROR', error.message);
             } finally {
                 if (reader) {
                     reader.releaseLock();
                 }
             }
-            
-            // Brief pause before trying to reconnect the reader loop if interrupted
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 100)); // Safety delay
         }
     }
 
-    // Generate next command in sequence
     function getNextCommand() {
         const tStr = String(currentT).padStart(2, '0');
         const cStr = String(currentCounter).padStart(3, '0');
         const cmd = `t${tStr}a25${cStr}`;
 
-        // Step up logic for next execution
         currentCounter++;
         if (currentCounter > 4) {
             currentCounter = 1;
             currentT++;
             if (currentT > 8) {
-                currentT = 1; // Loop completely back to t01
+                currentT = 1; 
             }
         }
         return cmd;
     }
 
-    // Send Single Command Block
     async function sendCommand() {
         if (!port || !port.writable) return;
 
         const cmd = getNextCommand();
-        const fullPayload = cmd + "\r"; // Appending Carriage Return (CR)
+        const fullPayload = cmd + "\r"; 
 
-        // Increment and Update Counter UI
         commandCounters[cmd]++;
         document.getElementById(`count-${cmd}`).textContent = commandCounters[cmd];
 
-        // Write to Serial
-        const encoder = new TextEncoder();
-        writer = port.writable.getWriter();
-        await writer.write(encoder.encode(fullPayload));
-        writer.releaseLock();
-
-        logTraffic('SENT', cmd); // Records text without showing the raw hidden \r in live view
+        try {
+            const encoder = new TextEncoder();
+            writer = port.writable.getWriter();
+            await writer.write(encoder.encode(fullPayload));
+            writer.releaseLock();
+            logTraffic('SENT', cmd);
+        } catch (error) {
+            console.error("Write error:", error);
+            if (writer) writer.releaseLock();
+        }
     }
 
-    // Loop Control Buttons
     document.getElementById('btnStart').addEventListener('click', () => {
         document.getElementById('btnStart').disabled = true;
         document.getElementById('btnStop').disabled = false;
-        
-        // Run every 500ms
-        loopInterval = setInterval(sendCommand, 500);
+        // Interval changed to 1000ms (1 second)
+        loopInterval = setInterval(sendCommand, 1000);
     });
 
     document.getElementById('btnStop').addEventListener('click', () => {
@@ -288,26 +283,24 @@
         clearInterval(loopInterval);
     });
 
-    // Export Data directly to a downloadable CSV
     document.getElementById('btnCSV').addEventListener('click', () => {
         if (trafficHistory.length === 0) {
             alert("No data recorded yet.");
             return;
         }
 
-        let csvContent = "data:text/csv;charset=utf-8,Timestamp,Direction,Message/Command\n";
+        let csvContent = "\uFEFFTimestamp,Direction,Message/Command\n"; // Added BOM token for seamless Excel parsing
         
         trafficHistory.forEach(row => {
-            // Escape any embedded quotes just in case
             const escapedData = row.data.replace(/"/g, '""');
             csvContent += `"${row.timestamp}","${row.direction}","${escapedData}"\n`;
         });
 
-        const encodedUri = encodeURI(csvContent);
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
+        link.setAttribute("href", url);
         
-        // Naming formatting
         const dateStr = new Date().toISOString().slice(0,10);
         link.setAttribute("download", `serial_log_${dateStr}.csv`);
         document.body.appendChild(link);
@@ -316,7 +309,6 @@
         document.body.removeChild(link);
     });
 
-    // Populate initial table structure on load
     window.onload = initCounters;
 </script>
 
